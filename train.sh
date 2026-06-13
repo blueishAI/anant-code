@@ -30,9 +30,10 @@ echo "[setup] Detected ${GPU_COUNT} GPUs"
 
 # 1. Install dependencies & Login
 echo "[setup] Installing dependencies and authenticating..."
-pip install -q -U transformers peft datasets bitsandbytes accelerate sentencepiece huggingface_hub
+pip install -q -U transformers peft datasets bitsandbytes accelerate sentencepiece huggingface_hub gguf protobuf
+
 if [[ "${HUGGING_FACE_HUB_TOKEN}" != "YOUR_TOKEN_HERE" ]]; then
-    huggingface-cli login --token "${HUGGING_FACE_HUB_TOKEN}" --add-to-git-credential
+    hf auth login --token "${HUGGING_FACE_HUB_TOKEN}"
 else
     echo "WARNING: HUGGING_FACE_HUB_TOKEN not set. Training Qwen3-14B might fail if license is not accepted."
 fi
@@ -42,16 +43,13 @@ echo "[train] Starting LoRA training (Seq Len: 4096)..."
 torchrun --standalone --nproc_per_node="${GPU_COUNT}" lora_train.py 2>&1 | tee -a "${ANANT_OUTPUT_DIR}/logs/train.log"
 
 # 3. Merge Adapters
-echo "[merge] Merging LoRA adapters into base model (F16) using dual GPU..."
+echo "[merge] Merging LoRA adapters into base model (F16) on CPU..."
 python lora_merge.py 2>&1 | tee -a "${ANANT_OUTPUT_DIR}/logs/train.log"
 
 # 4. GGUF Conversion (F16)
-echo "[gguf] Converting to GGUF F16..."
+echo "[gguf] Cloning llama.cpp and converting to GGUF F16..."
+git clone --depth 1 https://github.com/ggerganov/llama.cpp.git /kaggle/temp/llama.cpp
 CONVERT_SCRIPT="/kaggle/temp/llama.cpp/convert_hf_to_gguf.py"
-if [[ ! -f "${CONVERT_SCRIPT}" ]]; then
-    git clone --depth 1 https://github.com/ggerganov/llama.cpp.git /kaggle/temp/llama.cpp-src
-    CONVERT_SCRIPT="/kaggle/temp/llama.cpp-src/convert_hf_to_gguf.py"
-fi
 
 ARTIFACT_NAME="anant-14b-coder"
 MERGED_DIR="${ANANT_OUTPUT_DIR}/merged/${ARTIFACT_NAME}-F16"
