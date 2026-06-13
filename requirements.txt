@@ -1,0 +1,11 @@
+accelerate>=1.6.0
+datasets>=3.5.0
+huggingface_hub>=0.31.2
+numpy>=1.26.4
+safetensors>=0.5.3
+sentencepiece>=0.2.0
+tokenizers>=0.21.1
+transformers>=4.50.0
+peft>=0.16.0
+torch>=2.4.0
+bitsandbytes>=0.46.0
