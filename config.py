@@ -4,14 +4,9 @@ from dataclasses import dataclass
 
 @dataclass
 class AnantConfig:
-    # Artifact identity
     param_label: str = os.getenv("ANANT_PARAM_LABEL", "14b")
     variant: str = os.getenv("ANANT_VARIANT", "coder")
-
-    # Hugging Face source
     base_model_id: str = os.getenv("ANANT_BASE_MODEL", "Qwen/Qwen3-14B")
-
-    # LoRA training schedule
     seq_len: int = int(os.getenv("ANANT_SEQ_LEN", "4096"))
     micro_batch_size: int = int(os.getenv("ANANT_MICRO_BATCH", "1"))
     grad_accum_steps: int = int(os.getenv("ANANT_GRAD_ACCUM", "8"))
@@ -21,21 +16,20 @@ class AnantConfig:
     lora_alpha: int = int(os.getenv("ANANT_LORA_ALPHA", "64"))
     lora_dropout: float = float(os.getenv("ANANT_LORA_DROPOUT", "0.05"))
     lora_lr: float = float(os.getenv("ANANT_LORA_LR", "1e-4"))
-    lora_steps: int = int(os.getenv("ANANT_LORA_STEPS", "2000"))
-
-    # Data — fixed dataset IDs
+    lora_steps: int = int(os.getenv("ANANT_LORA_STEPS", "500"))  # reduced for first run
     dataset_id: str = os.getenv(
         "ANANT_DATASET",
         "bigcode/the-stack-smol,code-search-net/code_search_net,Salesforce/xlam-function-calling-60k",
     )
     dataset_split: str = os.getenv("ANANT_DATASET_SPLIT", "train,train,train")
-    max_samples: int = int(os.getenv("ANANT_MAX_SAMPLES", "50000"))
+    max_samples: int = int(
+        os.getenv("ANANT_MAX_SAMPLES", "5000")
+    )  # 5k per dataset = 15k total
     messages_column: str = os.getenv("ANANT_MESSAGES_COLUMN", "messages")
-
-    # Paths
     work_dir: str = os.getenv("ANANT_WORK_DIR", "/kaggle/working")
     output_dir: str = os.getenv("ANANT_OUTPUT_DIR", "/kaggle/working/output_anant")
     hf_cache: str = os.getenv("HF_HOME", "/kaggle/temp/hf_cache")
+    dataset_cache: str = "/kaggle/working/dataset_cache"  # NEW
 
     @property
     def artifact_name(self) -> str:
