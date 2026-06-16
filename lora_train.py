@@ -342,7 +342,7 @@ def main() -> None:
             attention_mask = batch["attention_mask"].to(input_device)
             labels = batch["labels"].to(input_device)
 
-            with torch.cuda.amp.autocast(dtype=_cuda_dtype()):
+            with torch.amp.autocast("cuda", dtype=_cuda_dtype(), enabled=torch.cuda.is_available()):
                 outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
                 loss = outputs.loss
 
