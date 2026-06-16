@@ -112,6 +112,9 @@ def _tokenize_chat(tokenizer, messages: List[Dict], max_length: int, system_prom
         if prev_len >= len(input_ids):
             break
 
+    if input_ids and not any(label != -100 for label in labels):
+        labels = input_ids.copy()
+
     return {"input_ids": input_ids, "attention_mask": [1] * len(input_ids), "labels": labels}
 
 
@@ -122,8 +125,14 @@ def _format_example(example: Dict[str, Any], cfg: AnantConfig) -> List[Dict[str,
     
     # CodeSearchNet
     if "whole_func_string" in example:
+        doc = str(example.get("func_documentation_string") or "").strip()
+        lang = str(example.get("language") or "code").strip()
+        name = str(example.get("func_name") or "function").strip()
+        prompt = f"Write the {lang} function `{name}`."
+        if doc:
+            prompt += f"\n\nRequirements:\n{doc}"
         return [
-            {"role": "user", "content": f"Complete this code:\n{example.get('func_code_string', '')}"},
+            {"role": "user", "content": prompt},
             {"role": "assistant", "content": example.get("whole_func_string", "")}
         ]
     
@@ -141,7 +150,7 @@ def _format_example(example: Dict[str, Any], cfg: AnantConfig) -> List[Dict[str,
         try:
             raw_answer = example["answers"]
             # If it's already structured, we try to preserve it
-            if isinstance(raw_answer, str) and raw_answer.strip().startswith("{"):
+            if isinstance(raw_answer, str) and raw_answer.strip().startswith(("{", "[")):
                 formatted_answer = f"<tool_call>\n{raw_answer.strip()}\n</tool_call>"
             else:
                 formatted_answer = str(raw_answer)
@@ -281,6 +290,8 @@ def main() -> None:
     ds = _load_training_dataset(cfg, tokenizer)
     if rank == 0:
         print(f"[data] total_ready_rows={len(ds)}", flush=True)
+    if len(ds) == 0:
+        raise ValueError("No trainable rows after tokenization. Check dataset columns, seq_len, and chat template.")
     
     sampler = DistributedSampler(ds, num_replicas=world_size, rank=rank, shuffle=True) if world_size > 1 else None
     loader = DataLoader(
