@@ -17,8 +17,11 @@ export TOKENIZERS_PARALLELISM=false
 export PYTHONUNBUFFERED=1
 export CUDA_VISIBLE_DEVICES="0,1"
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+export ANANT_SEQ_LEN="${ANANT_SEQ_LEN:-2048}"
+export ANANT_LORA_R="${ANANT_LORA_R:-16}"
+export ANANT_LORA_ALPHA="${ANANT_LORA_ALPHA:-32}"
 export ANANT_DEVICE_MAP="${ANANT_DEVICE_MAP:-auto}"
-export ANANT_MAX_MEMORY_GPU="${ANANT_MAX_MEMORY_GPU:-13GiB}"
+export ANANT_MAX_MEMORY_GPU="${ANANT_MAX_MEMORY_GPU:-12GiB}"
 export ANANT_MAX_MEMORY_CPU="${ANANT_MAX_MEMORY_CPU:-24GiB}"
 
 mkdir -p "${ANANT_OUTPUT_DIR}/logs" "${ANANT_OUTPUT_DIR}/gguf" "${HF_HOME}" /kaggle/temp
@@ -43,7 +46,7 @@ else
 fi
 
 # 2. Run Training
-echo "[train] Starting LoRA training (Seq Len: 4096)..."
+echo "[train] Starting LoRA training (Seq Len: ${ANANT_SEQ_LEN})..."
 if [[ "${ANANT_DEVICE_MAP}" == "auto" ]]; then
   python -u lora_train.py 2>&1 | tee -a "${ANANT_OUTPUT_DIR}/logs/train.log"
 else
