@@ -1,6 +1,7 @@
 import json
 import os
 import gc
+from collections.abc import Mapping
 from typing import Dict, List, Any
 
 import torch
@@ -18,7 +19,7 @@ from config import AnantConfig
 
 
 def _as_token_ids(value: Any) -> List[int]:
-    if isinstance(value, dict):
+    while isinstance(value, Mapping):
         value = value.get("input_ids", [])
     if hasattr(value, "tolist"):
         value = value.tolist()
