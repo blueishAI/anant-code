@@ -17,6 +17,16 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 from config import AnantConfig
 
 
+def _as_token_ids(value: Any) -> List[int]:
+    if isinstance(value, dict):
+        value = value.get("input_ids", [])
+    if hasattr(value, "tolist"):
+        value = value.tolist()
+    if value and isinstance(value[0], list):
+        value = value[0]
+    return [int(token_id) for token_id in value]
+
+
 def _cuda_dtype() -> torch.dtype:
     if not torch.cuda.is_available():
         return torch.float32
@@ -84,26 +94,26 @@ def _tokenize_chat(tokenizer, messages: List[Dict], max_length: int, system_prom
     if not messages:
         return {"input_ids": [], "attention_mask": [], "labels": []}
 
-    input_ids = tokenizer.apply_chat_template(
+    input_ids = _as_token_ids(tokenizer.apply_chat_template(
         messages,
         tokenize=True,
         add_generation_prompt=False,
         truncation=True,
         max_length=max_length,
-    )
+    ))
     labels = [-100] * len(input_ids)
 
     prefix: List[Dict[str, str]] = []
     prev_len = 0
     for message in messages:
         current = prefix + [message]
-        current_ids = tokenizer.apply_chat_template(
+        current_ids = _as_token_ids(tokenizer.apply_chat_template(
             current,
             tokenize=True,
             add_generation_prompt=False,
             truncation=True,
             max_length=max_length,
-        )
+        ))
         current_len = min(len(current_ids), len(input_ids))
         if message["role"] == "assistant" and current_len > prev_len:
             labels[prev_len:current_len] = input_ids[prev_len:current_len]
@@ -210,8 +220,11 @@ def _load_training_dataset(cfg: AnantConfig, tokenizer):
 
 
 def _collate_batch(tokenizer, examples: List[Dict]) -> Dict[str, torch.Tensor]:
-    labels = [example["labels"] for example in examples]
-    features = [{"input_ids": example["input_ids"], "attention_mask": example["attention_mask"]} for example in examples]
+    labels = [_as_token_ids(example["labels"]) for example in examples]
+    features = []
+    for example in examples:
+        input_ids = _as_token_ids(example["input_ids"])
+        features.append({"input_ids": input_ids, "attention_mask": [1] * len(input_ids)})
     batch = tokenizer.pad(features, padding=True, return_tensors="pt")
 
     max_len = batch["input_ids"].shape[1]
