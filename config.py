@@ -25,6 +25,8 @@ class AnantConfig:
     max_samples: int = int(
         os.getenv("ANANT_MAX_SAMPLES", "5000")
     )  # 5k per dataset = 15k total
+    dataset_num_proc: int = int(os.getenv("ANANT_DATASET_NUM_PROC", "2"))
+    dataloader_num_workers: int = int(os.getenv("ANANT_DATALOADER_WORKERS", "2"))
     messages_column: str = os.getenv("ANANT_MESSAGES_COLUMN", "messages")
     work_dir: str = os.getenv("ANANT_WORK_DIR", "/kaggle/working")
     output_dir: str = os.getenv("ANANT_OUTPUT_DIR", "/kaggle/working/output_anant")

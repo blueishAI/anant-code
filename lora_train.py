@@ -1,7 +1,6 @@
 import json
 import os
 import gc
-from itertools import islice
 from typing import Dict, List, Any
 
 import torch
@@ -35,7 +34,28 @@ def _memory_snapshot() -> str:
 
 
 def _qlora_device_map(local_rank: int):
+    requested = os.getenv("ANANT_DEVICE_MAP", "auto").strip().lower()
+    if requested == "auto":
+        return "auto"
     return {"": local_rank}
+
+
+def _qlora_max_memory():
+    if os.getenv("ANANT_DEVICE_MAP", "auto").strip().lower() != "auto" or not torch.cuda.is_available():
+        return None
+
+    gpu_limit = os.getenv("ANANT_MAX_MEMORY_GPU", "13GiB")
+    cpu_limit = os.getenv("ANANT_MAX_MEMORY_CPU", "24GiB")
+    memory = {idx: gpu_limit for idx in range(torch.cuda.device_count())}
+    memory["cpu"] = cpu_limit
+    return memory
+
+
+def _model_input_device(model, fallback: str):
+    embeddings = model.get_input_embeddings()
+    if embeddings is not None:
+        return embeddings.weight.device
+    return next(model.parameters()).device if any(True for _ in model.parameters()) else torch.device(fallback)
 
 
 def _clean_messages(messages: List[Dict], system_prompt: str) -> List[Dict[str, str]]:
@@ -147,29 +167,36 @@ def _load_training_dataset(cfg: AnantConfig, tokenizer):
     splits = [item.strip() for item in cfg.dataset_split.split(",") if item.strip()]
     if len(splits) == 1 and len(dataset_ids) > 1:
         splits = splits * len(dataset_ids)
+    if len(dataset_ids) != len(splits):
+        raise ValueError(f"Dataset/split mismatch: {dataset_ids} vs {splits}")
 
     datasets = []
-    per_dataset_max = cfg.max_samples // len(dataset_ids)
+    per_dataset_max = cfg.max_samples // len(dataset_ids) if cfg.max_samples > 0 and len(dataset_ids) > 1 else cfg.max_samples
     for dataset_id, split in zip(dataset_ids, splits):
-        print(f"[data] loading {dataset_id} ({split})")
+        print(f"[data] loading {dataset_id} ({split}) max_samples={per_dataset_max}", flush=True)
         try:
-            # Stream to save local disk/RAM before slicing
-            ds = load_dataset(dataset_id, split=split, streaming=True)
-            ds_list = list(islice(ds, per_dataset_max))
-            ds = Dataset.from_list(ds_list)
-            
+            if per_dataset_max > 0:
+                stream = load_dataset(dataset_id, split=split, streaming=True)
+                ds = Dataset.from_list(list(stream.take(per_dataset_max)))
+            else:
+                ds = load_dataset(dataset_id, split=split)
+
+            print(f"[data] tokenizing {dataset_id} rows={len(ds)}", flush=True)
             ds = ds.map(
                 lambda example: _tokenize_chat(tokenizer, _format_example(example, cfg), cfg.seq_len, cfg.system_prompt),
                 remove_columns=ds.column_names,
-                desc=f"Tokenizing {dataset_id}"
+                desc=f"Tokenizing {dataset_id}",
+                num_proc=cfg.dataset_num_proc if cfg.dataset_num_proc > 1 else None,
             )
+            ds = ds.filter(lambda row: len(row["input_ids"]) > 0 and any(l != -100 for l in row["labels"]))
+            print(f"[data] ready {dataset_id} rows={len(ds)}", flush=True)
             datasets.append(ds)
         except Exception as e:
-            print(f"[data] error loading {dataset_id}: {e}")
+            print(f"[data] error loading {dataset_id}: {e}", flush=True)
 
     if not datasets:
         raise ValueError("No datasets loaded successfully.")
-        
+
     return concatenate_datasets(datasets) if len(datasets) > 1 else datasets[0]
 
 
@@ -204,8 +231,12 @@ def main() -> None:
     if rank == 0:
         print(f"[lora-cuda] artifact={cfg.artifact_name}")
         print(f"[lora-cuda] base_model={cfg.base_model_id}")
+        print(f"[lora-cuda] dataset={cfg.dataset_id} split={cfg.dataset_split}")
         print(f"[lora-cuda] seq_len={cfg.seq_len}")
-        print(f"[lora-cuda] memory_before_load={_memory_snapshot()}")
+        print(f"[lora-cuda] world_size={world_size}")
+        print(f"[lora-cuda] device_map={os.getenv('ANANT_DEVICE_MAP', 'auto')}")
+        print(f"[lora-cuda] max_memory={_qlora_max_memory()}")
+        print(f"[lora-cuda] memory_before_load={_memory_snapshot()}", flush=True)
 
     tokenizer = AutoTokenizer.from_pretrained(cfg.base_model_id, use_fast=True)
     if tokenizer.pad_token is None:
@@ -225,6 +256,7 @@ def main() -> None:
         low_cpu_mem_usage=True,
         quantization_config=quantization_config,
         device_map=_qlora_device_map(local_rank),
+        max_memory=_qlora_max_memory(),
     )
     
     model.config.use_cache = False
@@ -244,10 +276,11 @@ def main() -> None:
     model.train()
     
     if rank == 0:
-        print(f"[lora-cuda] memory_after_lora={_memory_snapshot()}")
+        print(f"[lora-cuda] memory_after_lora={_memory_snapshot()}", flush=True)
 
     ds = _load_training_dataset(cfg, tokenizer)
-    ds = ds.filter(lambda row: len(row["input_ids"]) > 0 and any(l != -100 for l in row["labels"]))
+    if rank == 0:
+        print(f"[data] total_ready_rows={len(ds)}", flush=True)
     
     sampler = DistributedSampler(ds, num_replicas=world_size, rank=rank, shuffle=True) if world_size > 1 else None
     loader = DataLoader(
@@ -257,29 +290,39 @@ def main() -> None:
         shuffle=(sampler is None),
         drop_last=True,
         collate_fn=lambda examples: _collate_batch(tokenizer, examples),
+        num_workers=cfg.dataloader_num_workers,
+        pin_memory=torch.cuda.is_available(),
     )
+    if rank == 0:
+        print(f"[train] batches_per_epoch={len(loader)} micro_batch={cfg.micro_batch_size} grad_accum={cfg.grad_accum_steps}", flush=True)
 
     optimizer = bnb.optim.PagedAdamW8bit(model.parameters(), lr=cfg.lora_lr)
     
     step = 0
+    epoch = 0
     optimizer.zero_grad(set_to_none=True)
     
     while step < cfg.lora_steps:
+        epoch += 1
         if sampler is not None:
-            sampler.set_epoch(step)
+            sampler.set_epoch(epoch)
             
-        for i, batch in enumerate(loader):
+        if rank == 0:
+            print(f"[train] epoch={epoch} start step={step}/{cfg.lora_steps}", flush=True)
+
+        for i, batch in enumerate(loader, start=1):
             step += 1
-            input_ids = batch["input_ids"].to(f"cuda:{local_rank}")
-            attention_mask = batch["attention_mask"].to(f"cuda:{local_rank}")
-            labels = batch["labels"].to(f"cuda:{local_rank}")
+            input_device = _model_input_device(model, f"cuda:{local_rank}")
+            input_ids = batch["input_ids"].to(input_device)
+            attention_mask = batch["attention_mask"].to(input_device)
+            labels = batch["labels"].to(input_device)
 
             with torch.cuda.amp.autocast(dtype=_cuda_dtype()):
                 outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
                 loss = outputs.loss
 
             if not torch.isfinite(loss):
-                print(f"[lora] ERROR: Non-finite loss at step {step}")
+                print(f"[lora] ERROR: Non-finite loss at step {step}", flush=True)
                 continue
 
             (loss / cfg.grad_accum_steps).backward()
@@ -290,7 +333,13 @@ def main() -> None:
                 optimizer.zero_grad(set_to_none=True)
 
             if step % cfg.log_every == 0 and rank == 0:
-                print(f"[lora] step={step}/{cfg.lora_steps} loss={float(loss):.4f} mem={_memory_snapshot()}")
+                lr = optimizer.param_groups[0]["lr"]
+                print(
+                    f"[lora] epoch={epoch} step={step}/{cfg.lora_steps} "
+                    f"batch={i}/{len(loader)} lr={lr:.2e} loss={float(loss.detach().cpu()):.4f} "
+                    f"mem={_memory_snapshot()}",
+                    flush=True,
+                )
 
             if step % cfg.save_every == 0 and rank == 0:
                 model.save_pretrained(os.path.join(cfg.adapter_dir, f"checkpoint-{step}"))

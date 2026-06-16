@@ -14,8 +14,12 @@ export ANANT_WORK_DIR="/kaggle/working"
 export ANANT_OUTPUT_DIR="/kaggle/working/output_anant"
 export HF_HOME="/kaggle/temp/hf_cache"
 export TOKENIZERS_PARALLELISM=false
+export PYTHONUNBUFFERED=1
 export CUDA_VISIBLE_DEVICES="0,1"
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+export ANANT_DEVICE_MAP="${ANANT_DEVICE_MAP:-auto}"
+export ANANT_MAX_MEMORY_GPU="${ANANT_MAX_MEMORY_GPU:-13GiB}"
+export ANANT_MAX_MEMORY_CPU="${ANANT_MAX_MEMORY_CPU:-24GiB}"
 
 mkdir -p "${ANANT_OUTPUT_DIR}/logs" "${ANANT_OUTPUT_DIR}/gguf" "${HF_HOME}" /kaggle/temp
 : > "${ANANT_OUTPUT_DIR}/logs/train.log"
@@ -40,7 +44,11 @@ fi
 
 # 2. Run Training
 echo "[train] Starting LoRA training (Seq Len: 4096)..."
-torchrun --standalone --nproc_per_node="${GPU_COUNT}" lora_train.py 2>&1 | tee -a "${ANANT_OUTPUT_DIR}/logs/train.log"
+if [[ "${ANANT_DEVICE_MAP}" == "auto" ]]; then
+  python -u lora_train.py 2>&1 | tee -a "${ANANT_OUTPUT_DIR}/logs/train.log"
+else
+  torchrun --standalone --nproc_per_node="${GPU_COUNT}" lora_train.py 2>&1 | tee -a "${ANANT_OUTPUT_DIR}/logs/train.log"
+fi
 
 # 3. Merge Adapters
 echo "[merge] Merging LoRA adapters into base model (F16) on CPU..."
