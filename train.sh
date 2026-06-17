@@ -23,6 +23,8 @@ export ANANT_LORA_ALPHA="${ANANT_LORA_ALPHA:-16}"
 export ANANT_DEVICE_MAP="${ANANT_DEVICE_MAP:-auto}"
 export ANANT_MAX_MEMORY_GPU="${ANANT_MAX_MEMORY_GPU:-10GiB}"
 export ANANT_MAX_MEMORY_CPU="${ANANT_MAX_MEMORY_CPU:-24GiB}"
+export ANANT_MERGE_METHOD="${ANANT_MERGE_METHOD:-stream}"
+export ANANT_KEEP_MERGED="${ANANT_KEEP_MERGED:-0}"
 
 mkdir -p "${ANANT_OUTPUT_DIR}/logs" "${ANANT_OUTPUT_DIR}/gguf" "${HF_HOME}" /kaggle/temp
 : > "${ANANT_OUTPUT_DIR}/logs/train.log"
@@ -55,7 +57,7 @@ else
 fi
 
 # 3. Merge Adapters
-echo "[merge] Merging LoRA adapters into base model (F16) on CPU..."
+echo "[merge] Merging LoRA adapters into base model (F16, method=${ANANT_MERGE_METHOD})..."
 python lora_merge.py 2>&1 | tee -a "${ANANT_OUTPUT_DIR}/logs/train.log"
 
 # 4. GGUF Conversion (F16)
@@ -68,6 +70,11 @@ MERGED_DIR="${ANANT_OUTPUT_DIR}/merged/${ARTIFACT_NAME}-F16"
 GGUF_F16="${ANANT_OUTPUT_DIR}/gguf/${ARTIFACT_NAME}-F16.gguf"
 
 python "${CONVERT_SCRIPT}" "${MERGED_DIR}" --outfile "${GGUF_F16}" --outtype f16
+
+if [[ "${ANANT_KEEP_MERGED}" != "1" ]]; then
+  echo "[cleanup] Removing merged HF model to save disk. Set ANANT_KEEP_MERGED=1 to keep it."
+  rm -rf "${MERGED_DIR}"
+fi
 
 echo "[final] Training pipeline complete."
 echo "Artifacts available in ${ANANT_OUTPUT_DIR}"
