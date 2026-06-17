@@ -1,8 +1,27 @@
 import os
 import torch
+from importlib import metadata
 from peft import PeftModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from config import AnantConfig
+
+
+def _patch_incompatible_torchao() -> None:
+    try:
+        version = metadata.version("torchao")
+    except metadata.PackageNotFoundError:
+        return
+
+    major, minor, *_ = (int(part) for part in version.split(".")[:2])
+    if (major, minor) >= (0, 16):
+        return
+
+    # PEFT only needs this dispatcher for torchao-quantized layers. The merge path
+    # here uses a normal FP16 base model, so skip the incompatible torchao probe.
+    import peft.tuners.lora.torchao as peft_torchao
+
+    print(f"[merge] disabling incompatible torchao {version}; FP16 merge does not need it")
+    peft_torchao.is_torchao_available = lambda: False
 
 
 def main() -> None:
@@ -22,6 +41,7 @@ def main() -> None:
     )
     
     print(f"[merge] loading adapter: {cfg.adapter_dir}")
+    _patch_incompatible_torchao()
     model = PeftModel.from_pretrained(base, cfg.adapter_dir)
     
     print("[merge] merging and unloading on CPU (this may take a few minutes)...")

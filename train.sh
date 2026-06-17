@@ -38,6 +38,7 @@ echo "[setup] Detected ${GPU_COUNT} GPUs"
 # 1. Install dependencies & Login
 echo "[setup] Installing dependencies and authenticating..."
 pip install -q -U transformers peft datasets bitsandbytes accelerate sentencepiece huggingface_hub gguf protobuf
+pip uninstall -y -q torchao || true
 
 if [[ "${HUGGING_FACE_HUB_TOKEN}" != "YOUR_TOKEN_HERE" ]]; then
     hf auth login --token "${HUGGING_FACE_HUB_TOKEN}"
