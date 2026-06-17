@@ -105,7 +105,7 @@ def _anant_wrap_lora(name, gen):
         return gen
 
     def wrapped():
-        base = gen()
+        base = LazyTorchTensor.to_eager(gen())
         a, b = lora[name]
         delta = (b @ a).to(dtype=base.dtype) * scale
         return base + delta
