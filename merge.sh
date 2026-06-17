@@ -8,7 +8,8 @@ INPUT_OUTPUT="${INPUT_ROOT}/output_anant"
 WORK_OUTPUT="${ANANT_OUTPUT_DIR:-/kaggle/working/output_anant}"
 ARTIFACT_NAME="${ANANT_ARTIFACT_NAME:-anant-14b-coder}"
 BASE_MODEL="${ANANT_BASE_MODEL:-Qwen/Qwen3-14B}"
-GGUF_OUT="${ANANT_GGUF_OUT:-/kaggle/working/${ARTIFACT_NAME}-F16.gguf}"
+GGUF_TYPE="${ANANT_GGUF_TYPE:-q8_0}"
+GGUF_OUT="${ANANT_GGUF_OUT:-/kaggle/working/${ARTIFACT_NAME}-${GGUF_TYPE}.gguf}"
 LLAMA_CPP_DIR="/kaggle/working/llama.cpp"
 
 export ANANT_WORK_DIR="/kaggle/working"
@@ -124,8 +125,8 @@ text = text.replace(
 base_py.write_text(text)
 PY
 
-echo "[gguf] remote base + adapter -> ${GGUF_OUT}"
-python "${LLAMA_CPP_DIR}/convert_hf_to_gguf.py" "${BASE_MODEL}" --remote --outfile "${GGUF_OUT}" --outtype f16 2>&1 | tee -a "${WORK_OUTPUT}/logs/merge.log"
+echo "[gguf] remote base + adapter -> ${GGUF_OUT} (${GGUF_TYPE})"
+python "${LLAMA_CPP_DIR}/convert_hf_to_gguf.py" "${BASE_MODEL}" --remote --outfile "${GGUF_OUT}" --outtype "${GGUF_TYPE}" 2>&1 | tee -a "${WORK_OUTPUT}/logs/merge.log"
 
 echo "[clean] remove temp files"
 rm -rf "${LLAMA_CPP_DIR}" "${WORK_OUTPUT}/adapters"
